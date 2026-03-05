@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Vox</title>
+  <!-- Silero VAD: ONNX runtime + vad-web bundle -->
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.7/dist/bundle.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -127,8 +130,9 @@
       flex-shrink: 0;
       letter-spacing: .02em;
     }
-    #status-bar.recording { color: #f87171; }
+    #status-bar.recording  { color: #f87171; }
     #status-bar.processing { color: #a78bfa; }
+    #status-bar.listening  { color: #4ade80; }
 
     /* ── Controls ── */
     #controls {
@@ -157,35 +161,79 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: all .2s;
+      transition: background .3s, border-color .3s, box-shadow .3s;
       user-select: none;
       -webkit-user-select: none;
       touch-action: none;
       box-shadow: 0 4px 24px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1);
     }
-    #mic-btn:hover {
+    #mic-btn:hover:not(.in-call):not(.speaking):not(.processing) {
       background: rgba(192,132,252,0.18);
       border-color: rgba(192,132,252,0.4);
       box-shadow: 0 4px 28px rgba(192,132,252,0.2), inset 0 1px 0 rgba(255,255,255,0.1);
     }
-    #mic-btn.recording {
+
+    /* In-call: green breathe */
+    @keyframes breathe {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(34,197,94,.35), 0 4px 24px rgba(0,0,0,.3); }
+      50%       { box-shadow: 0 0 0 18px rgba(34,197,94,.04), 0 0 44px rgba(34,197,94,.3); }
+    }
+    #mic-btn.in-call {
+      background: rgba(34,197,94,0.18);
+      border-color: rgba(34,197,94,0.5);
+      animation: breathe 2s ease-in-out infinite;
+    }
+
+    /* Speaking: red pulse */
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 8px rgba(239,68,68,0.12), 0 0 40px rgba(239,68,68,0.2); }
+      50%       { box-shadow: 0 0 0 18px rgba(239,68,68,0.05), 0 0 60px rgba(239,68,68,0.15); }
+    }
+    #mic-btn.speaking {
       background: rgba(239,68,68,0.3);
       border-color: rgba(239,68,68,0.6);
-      box-shadow: 0 0 0 8px rgba(239,68,68,0.12), 0 0 40px rgba(239,68,68,0.25);
       animation: pulse 1.2s infinite;
     }
+
+    /* Processing: purple lock */
     #mic-btn.processing {
       background: rgba(129,96,255,0.25);
       border-color: rgba(129,96,255,0.5);
       box-shadow: 0 0 28px rgba(129,96,255,0.3);
       cursor: not-allowed;
-    }
-    @keyframes pulse {
-      0%, 100% { box-shadow: 0 0 0 8px rgba(239,68,68,0.12), 0 0 40px rgba(239,68,68,0.2); }
-      50%       { box-shadow: 0 0 0 16px rgba(239,68,68,0.06), 0 0 60px rgba(239,68,68,0.15); }
+      animation: none;
     }
 
     #mic-btn svg { pointer-events: none; }
+
+    /* ── Stop button ── */
+    #stop-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 20px;
+      border-radius: 20px;
+      border: 1px solid rgba(239,68,68,0.4);
+      background: rgba(239,68,68,0.12);
+      color: #f87171;
+      cursor: pointer;
+      font-size: .8rem;
+      font-weight: 600;
+      letter-spacing: .03em;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(4px);
+      transition: opacity .2s, transform .2s, background .15s, border-color .15s;
+    }
+    #stop-btn.visible {
+      opacity: 1;
+      pointer-events: auto;
+      transform: none;
+    }
+    #stop-btn:hover {
+      background: rgba(239,68,68,0.25);
+      border-color: rgba(239,68,68,0.7);
+    }
 
     #hint {
       font-size: .72rem;
@@ -257,18 +305,26 @@
 <div id="chat">
   <div class="msg bot">
     <div class="label">Bot</div>
-    Hello! Hold the button or press <strong>Space</strong> to talk.
+    Hello! Press <strong>Space</strong> or click the button to start a call.
   </div>
 </div>
 
 <div id="status-bar">Ready</div>
 
 <div id="controls">
-  <button id="mic-btn" title="Hold to talk">
-    <!-- mic icon -->
+  <button id="mic-btn" title="Start call">
+    <!-- Phone icon — replaced by JS on call start/end -->
     <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v6a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm7 8a1 1 0 0 1 1 1 8 8 0 0 1-7 7.94V22h2a1 1 0 0 1 0 2H9a1 1 0 0 1 0-2h2v-2.06A8 8 0 0 1 4 12a1 1 0 0 1 2 0 6 6 0 0 0 12 0 1 1 0 0 1 1-1z"/>
+      <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/>
     </svg>
+  </button>
+
+  <!-- Stop button (shown during bot response) -->
+  <button id="stop-btn" title="Stop response">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+      <rect x="4" y="4" width="16" height="16" rx="2"/>
+    </svg>
+    Stop
   </button>
 
   <!-- LLM engine picker -->
@@ -286,33 +342,62 @@
     <select id="voice-select"></select>
   </div>
 
-  <span id="hint">Hold Space or hold button to talk</span>
+  <span id="hint">Press Space or click to start a call · Space again to end</span>
 </div>
 
 <script>
-  const chat = document.getElementById('chat');
-  const micBtn = document.getElementById('mic-btn');
-  const statusBar = document.getElementById('status-bar');
-  const clearBtn = document.getElementById('clear-btn');
+  // ── DOM refs ──────────────────────────────────────────────────────────────────
+  const chat        = document.getElementById('chat');
+  const micBtn      = document.getElementById('mic-btn');
+  const stopBtn     = document.getElementById('stop-btn');
+  const statusBar   = document.getElementById('status-bar');
+  const clearBtn    = document.getElementById('clear-btn');
   const voiceSelect = document.getElementById('voice-select');
-  const engineBtns = document.querySelectorAll('[data-engine]');
-  const llmBtns = document.querySelectorAll('[data-llm]');
-  const modelBadge = document.getElementById('model-badge');
+  const engineBtns  = document.querySelectorAll('[data-engine]');
+  const llmBtns     = document.querySelectorAll('[data-llm]');
+  const modelBadge  = document.getElementById('model-badge');
+  const hint        = document.getElementById('hint');
 
+  // ── App state ─────────────────────────────────────────────────────────────────
   let currentLlmEngine = 'ollama';
+  let currentEngine    = 'kokoro';
+  let allVoices        = { kokoro: {}, edge: {} };
 
-  let mediaRecorder = null;
-  let audioChunks = [];
-  let stream = null;
-  let isRecording = false;
-  let isProcessing = false;
+  let inCall               = false;   // currently in a call session
+  let vadInstance          = null;    // MicVAD instance (reused across calls)
+  let isProcessingVAD      = false;   // true while STT/LLM/TTS pipeline is running
+  let audioCtx             = null;
 
-  // ── AudioContext (unlocked on first user gesture — required for Safari) ──
-  let audioCtx = null;
+  // Stop-response support
+  let currentAbortController = null;  // AbortController for in-flight fetch
+  let currentAudioSource     = null;  // Active AudioBufferSourceNode
+  let audioQueue             = [];    // Pending audio chunks (module-level for stopAll)
+  let isPlayingAudio         = false;
+
+  // CDN bases — versions pinned for reproducibility
+  const VADWEB_CDN   = 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.7/dist/';
+  const ONNXWASM_CDN = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/';
+
+  // ── Button SVG icons ──────────────────────────────────────────────────────────
+  const ICON_PHONE = `<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2
+             1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17
+             0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/>
+  </svg>`;
+
+  // Hang-up icon (rotated phone)
+  const ICON_HANG_UP = `<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85
+             -.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08A.996.996 0 0 1 0 12.37
+             c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.66
+             c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29
+             -.27 0-.52-.1-.7-.28-.79-.73-1.68-1.36-2.66-1.85a.997.997 0 0 1-.56-.9
+             V9.72C15.15 9.25 13.6 9 12 9z"/>
+  </svg>`;
+
+  // ── AudioContext (Safari requires unlock on user gesture) ─────────────────────
   function ensureAudioContext() {
-    if (!audioCtx) {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === 'suspended') audioCtx.resume();
   }
 
@@ -321,16 +406,30 @@
     const bytes = Uint8Array.from(atob(base64data), c => c.charCodeAt(0));
     const audioBuffer = await audioCtx.decodeAudioData(bytes.buffer.slice(0));
     const source = audioCtx.createBufferSource();
+    currentAudioSource = source;
     source.buffer = audioBuffer;
     source.connect(audioCtx.destination);
     source.start(0);
-    return new Promise(resolve => { source.onended = resolve; });
+    return new Promise(resolve => {
+      source.onended = () => {
+        if (currentAudioSource === source) currentAudioSource = null;
+        resolve();
+      };
+    });
   }
 
-  // ── TTS engine / voice state ──
-  let allVoices = { kokoro: {}, edge: {} };
-  let currentEngine = 'kokoro';
+  // Stop any in-flight response: abort fetch + kill audio + clear queue
+  function stopAll() {
+    if (currentAbortController) { currentAbortController.abort(); currentAbortController = null; }
+    audioQueue = [];
+    isPlayingAudio = false;
+    if (currentAudioSource) {
+      try { currentAudioSource.stop(); } catch (_) {}
+      currentAudioSource = null;
+    }
+  }
 
+  // ── TTS engine / voice selection ──────────────────────────────────────────────
   async function loadVoices() {
     const res = await fetch('/voices');
     allVoices = await res.json();
@@ -358,8 +457,8 @@
   });
 
   const LLM_BADGES = {
-    ollama: 'qwen3.5:2b · whisper-small',
-    openrouter: 'gpt-oss-120b · whisper-small',
+    ollama:      'qwen3.5:2b · whisper-small',
+    openrouter:  'gpt-oss-120b · whisper-small',
   };
 
   llmBtns.forEach(btn => {
@@ -373,6 +472,7 @@
 
   loadVoices();
 
+  // ── UI helpers ────────────────────────────────────────────────────────────────
   function setStatus(text, cls = '') {
     statusBar.textContent = text;
     statusBar.className = cls;
@@ -384,155 +484,229 @@
     const label = document.createElement('div');
     label.className = 'label';
     label.textContent = role === 'user' ? 'You' : 'Bot';
+    const body = document.createElement('span');
+    body.className = 'msg-body';
+    body.textContent = text;
     div.appendChild(label);
-    div.appendChild(document.createTextNode(text));
+    div.appendChild(body);
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
     return div;
   }
 
-  function addThinking() {
-    const div = document.createElement('div');
-    div.className = 'msg bot';
-    div.innerHTML = '<div class="label">Bot</div><em style="opacity:.5">Thinking…</em>';
-    chat.appendChild(div);
-    chat.scrollTop = chat.scrollHeight;
-    return div;
-  }
-
-  async function getStream() {
-    if (!stream) {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  // ── WAV encoder (Float32 PCM → WAV Blob) ─────────────────────────────────────
+  function encodeWAV(samples, sampleRate) {
+    const buf = new ArrayBuffer(44 + samples.length * 2);
+    const v   = new DataView(buf);
+    const str = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+    str(0, 'RIFF'); v.setUint32(4, 36 + samples.length * 2, true);
+    str(8, 'WAVE'); str(12, 'fmt ');
+    v.setUint32(16, 16, true);              // fmt chunk size
+    v.setUint16(20, 1, true);              // PCM
+    v.setUint16(22, 1, true);              // mono
+    v.setUint32(24, sampleRate, true);
+    v.setUint32(28, sampleRate * 2, true); // byte rate
+    v.setUint16(32, 2, true);              // block align
+    v.setUint16(34, 16, true);             // bits per sample
+    str(36, 'data'); v.setUint32(40, samples.length * 2, true);
+    let off = 44;
+    for (let i = 0; i < samples.length; i++) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      off += 2;
     }
-    return stream;
+    return new Blob([buf], { type: 'audio/wav' });
   }
 
-  async function startRecording() {
-    if (isRecording || isProcessing) return;
-    ensureAudioContext(); // unlock on user gesture so Safari allows later playback
-    try {
-      const s = await getStream();
-      audioChunks = [];
-      mediaRecorder = new MediaRecorder(s);
-      mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
-      mediaRecorder.start();
-      isRecording = true;
-      micBtn.classList.add('recording');
-      setStatus('Recording… release to send', 'recording');
-    } catch (err) {
-      setStatus('Microphone access denied');
-      console.error(err);
-    }
-  }
+  // ── Silero VAD initialisation ─────────────────────────────────────────────────
+  async function initVAD() {
+    setStatus('Loading VAD model…', 'processing');
 
-  async function stopRecording() {
-    if (!isRecording || !mediaRecorder) return;
-    isRecording = false;
-    micBtn.classList.remove('recording');
+    // Fetch the AudioWorklet script as a blob so addModule() is same-origin
+    const workletResp = await fetch(VADWEB_CDN + 'vad.worklet.bundle.min.js');
+    const workletText = await workletResp.text();
+    const workletURL  = URL.createObjectURL(
+      new Blob([workletText], { type: 'application/javascript' })
+    );
 
-    return new Promise(resolve => {
-      mediaRecorder.onstop = async () => {
-        const mimeType = mediaRecorder.mimeType || 'audio/webm';
-        const ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp4') ? 'mp4' : 'webm';
-        const blob = new Blob(audioChunks, { type: mimeType });
-        audioChunks = [];
-        await sendAudio(blob, ext);
-        resolve();
-      };
-      mediaRecorder.stop();
+    vadInstance = await vad.MicVAD.new({
+      workletURL,
+      modelURL: VADWEB_CDN + 'silero_vad.onnx',
+      // Point ONNX runtime WASM files to CDN
+      ortConfig: (ort) => { ort.env.wasm.wasmPaths = ONNXWASM_CDN; },
+      // ~500 ms silence = 5 frames × 96 ms/frame (1536 samples @ 16 kHz)
+      redemptionFrames: 5,
+      onSpeechStart: () => {
+        if (!inCall || isProcessingVAD) return;
+        micBtn.classList.add('speaking');
+        setStatus('Speaking…', 'recording');
+      },
+      onSpeechEnd: async (audio) => {
+        if (!inCall || isProcessingVAD) return;
+        micBtn.classList.remove('speaking');
+        await handleVADAudio(encodeWAV(audio, 16000));
+      },
     });
   }
 
-  async function sendAudio(blob, ext) {
-    if (blob.size < 1000) {
-      setStatus('Recording too short, try again');
+  // ── Call toggle ───────────────────────────────────────────────────────────────
+  async function toggleCall() {
+    // Allow ending the call even if processing is in flight
+    if (isProcessingVAD) {
+      if (inCall) endCall();
       return;
     }
 
-    isProcessing = true;
-    micBtn.classList.add('processing');
-    setStatus('Transcribing…', 'processing');
-
-    let thinkingEl = null;
-
-    try {
-      // ── Step 1: Transcribe ──
-      const sttForm = new FormData();
-      sttForm.append('audio', blob, `audio.${ext}`);
-
-      const sttRes = await fetch('/transcribe', { method: 'POST', body: sttForm });
-      const sttData = await sttRes.json();
-
-      if (sttData.error) {
-        setStatus(sttData.error);
-        return;
+    if (!inCall) {
+      ensureAudioContext();
+      micBtn.disabled = true;
+      try {
+        if (!vadInstance) await initVAD();
+        vadInstance.start();
+        inCall = true;
+        micBtn.classList.add('in-call');
+        micBtn.innerHTML = ICON_HANG_UP;
+        micBtn.title = 'End call';
+        hint.textContent = 'Press Space or click to end call';
+        setStatus('Listening…', 'listening');
+      } catch (err) {
+        setStatus('Error: ' + err.message);
+        console.error(err);
+      } finally {
+        micBtn.disabled = false;
       }
-
-      // Show user message immediately after transcription
-      addMessage('user', sttData.transcription);
-      thinkingEl = addThinking();
-      setStatus('Thinking…', 'processing');
-
-      // ── Step 2: LLM + TTS ──
-      const respondForm = new FormData();
-      respondForm.append('text', sttData.transcription);
-      respondForm.append('tts_engine', currentEngine);
-      respondForm.append('voice', voiceSelect.value);
-      respondForm.append('llm_engine', currentLlmEngine);
-
-      const res = await fetch('/respond', { method: 'POST', body: respondForm });
-      const data = await res.json();
-
-      thinkingEl.remove();
-      thinkingEl = null;
-
-      if (data.error) {
-        setStatus(data.error);
-        return;
-      }
-
-      addMessage('bot', data.response);
-
-      // Play TTS audio via AudioContext (works on Safari — bypasses autoplay block)
-      if (data.audio) {
-        await playAudioB64(data.audio).catch(console.error);
-      }
-
-      setStatus('Ready');
-    } catch (err) {
-      if (thinkingEl) thinkingEl.remove();
-      setStatus('Error: ' + err.message);
-      console.error(err);
-    } finally {
-      isProcessing = false;
-      micBtn.classList.remove('processing');
+    } else {
+      endCall();
     }
   }
 
-  // ── Button: hold to talk ──
-  micBtn.addEventListener('mousedown', e => { e.preventDefault(); startRecording(); });
-  micBtn.addEventListener('mouseup',   () => stopRecording());
-  micBtn.addEventListener('mouseleave', () => { if (isRecording) stopRecording(); });
+  function endCall() {
+    if (vadInstance) vadInstance.pause();
+    inCall = false;
+    micBtn.classList.remove('in-call', 'speaking', 'processing');
+    micBtn.innerHTML = ICON_PHONE;
+    micBtn.title = 'Start call';
+    hint.textContent = 'Press Space or click to start a call · Space again to end';
+    setStatus('Ready');
+  }
 
-  // Touch support
-  micBtn.addEventListener('touchstart', e => { e.preventDefault(); startRecording(); }, { passive: false });
-  micBtn.addEventListener('touchend',   e => { e.preventDefault(); stopRecording(); }, { passive: false });
+  // ── VAD audio pipeline: STT → LLM (SSE) → TTS chunks ────────────────────────
+  async function handleVADAudio(wavBlob) {
+    if (!inCall) return;
+    isProcessingVAD = true;
+    audioQueue = [];
+    isPlayingAudio = false;
+    micBtn.classList.remove('speaking');
+    micBtn.classList.add('processing');
+    stopBtn.classList.add('visible');
 
-  // ── Keyboard: Space to talk ──
+    currentAbortController = new AbortController();
+    const { signal } = currentAbortController;
+
+    try {
+      // ── Step 1: Speech-to-text ──
+      setStatus('Transcribing…', 'processing');
+      const sttForm = new FormData();
+      sttForm.append('audio', wavBlob, 'audio.wav');
+      const sttRes  = await fetch('/transcribe', { method: 'POST', body: sttForm, signal });
+      const sttData = await sttRes.json();
+      if (sttData.error) { setStatus(sttData.error); return; }
+
+      addMessage('user', sttData.transcription);
+      setStatus('Thinking…', 'processing');
+
+      // ── Step 2: SSE stream — LLM tokens → sentences → TTS audio chunks ──
+      const respondForm = new FormData();
+      respondForm.append('text',       sttData.transcription);
+      respondForm.append('tts_engine', currentEngine);
+      respondForm.append('voice',      voiceSelect.value);
+      respondForm.append('llm_engine', currentLlmEngine);
+
+      const res    = await fetch('/respond', { method: 'POST', body: respondForm, signal });
+      const reader = res.body.getReader();
+      const dec    = new TextDecoder();
+
+      let sseBuffer = '', botEl = null, botText = '';
+
+      async function drainAudioQueue() {
+        if (isPlayingAudio) return;
+        isPlayingAudio = true;
+        while (audioQueue.length > 0) {
+          await playAudioB64(audioQueue.shift()).catch(console.error);
+        }
+        isPlayingAudio = false;
+      }
+
+      // SSE read loop
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sseBuffer += dec.decode(value, { stream: true });
+        const lines = sseBuffer.split('\n');
+        sseBuffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          let event;
+          try { event = JSON.parse(line.slice(6)); } catch { continue; }
+
+          if (event.type === 'text') {
+            botText += (botText ? ' ' : '') + event.chunk;
+            if (!botEl) {
+              botEl = addMessage('bot', botText);
+              setStatus('Speaking…', 'processing');
+            } else {
+              botEl.querySelector('.msg-body').textContent = botText;
+              chat.scrollTop = chat.scrollHeight;
+            }
+          } else if (event.type === 'audio') {
+            audioQueue.push(event.data);
+            drainAudioQueue();
+          } else if (event.type === 'error') {
+            setStatus('Error: ' + event.message);
+          } else if (event.type === 'done') {
+            await new Promise(resolve => {
+              (function check() {
+                if (!isPlayingAudio && audioQueue.length === 0) return resolve();
+                setTimeout(check, 50);
+              })();
+            });
+          }
+        }
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        setStatus('Error: ' + err.message);
+        console.error(err);
+      }
+      // AbortError = user hit Stop — silent cleanup
+    } finally {
+      currentAbortController = null;
+      isProcessingVAD = false;
+      stopBtn.classList.remove('visible');
+      micBtn.classList.remove('processing');
+      if (inCall) {
+        micBtn.classList.add('in-call');
+        setStatus('Listening…', 'listening');
+      }
+    }
+  }
+
+  // ── Event listeners ───────────────────────────────────────────────────────────
+  micBtn.addEventListener('click', toggleCall);
+
+  stopBtn.addEventListener('click', () => {
+    stopAll();
+    // handleVADAudio finally block will clean up state and resume listening
+  });
+
   document.addEventListener('keydown', e => {
     if (e.code === 'Space' && e.target === document.body && !e.repeat) {
       e.preventDefault();
-      startRecording();
-    }
-  });
-  document.addEventListener('keyup', e => {
-    if (e.code === 'Space') {
-      e.preventDefault();
-      stopRecording();
+      toggleCall();
     }
   });
 
-  // ── Clear ──
   clearBtn.addEventListener('click', async () => {
     await fetch('/clear', { method: 'POST' });
     chat.innerHTML = '';
