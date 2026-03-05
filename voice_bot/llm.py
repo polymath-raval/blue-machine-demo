@@ -27,6 +27,14 @@ SYSTEM_PROMPT = (
 
 _ollama_client: AsyncClient | None = None
 _ollama_history: list[dict] = []
+_search_tool = DuckDuckGoSearchRun()
+
+OLLAMA_SYSTEM_PROMPT = (
+    SYSTEM_PROMPT + "\n\n"
+    "When you need current information or want to search for something, use this format:\n"
+    "<search>your search query here</search>\n"
+    "I will provide search results, then you can incorporate them into your response."
+)
 
 
 def _get_ollama_client() -> AsyncClient:
@@ -40,6 +48,41 @@ def _strip_thinking(text: str) -> str:
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
+async def chat_ollama(user_message: str) -> str:
+    """Chat with Ollama with tool calling support via search markers."""
+    client = _get_ollama_client()
+    
+    _ollama_history.append({"role": "user", "content": user_message})
+    recent = _ollama_history[-(MAX_HISTORY_TURNS * 2):]
+    messages = [{"role": "system", "content": OLLAMA_SYSTEM_PROMPT}] + recent
+
+    while True:
+        response_text = ""
+        async for chunk in await client.chat(
+            model="qwen3.5:4b",
+            messages=messages,
+            think=False,
+            stream=True,
+        ):
+            token = chunk.message.content or ""
+            response_text += token
+
+        # Check for search tool marker
+        search_match = re.search(r'<search>(.*?)</search>', response_text, re.DOTALL)
+        
+        if search_match:
+            query = search_match.group(1).strip()
+            print(f"[Tool Call] Searching for: {query}")
+            result = _search_tool.run(query)
+            
+            # Add response and search result to conversation
+            messages.append({"role": "assistant", "content": response_text})
+            messages.append({"role": "user", "content": f"Search results:\n{result}\n\nNow provide your response based on these results."})
+        else:
+            _ollama_history.append({"role": "assistant", "content": response_text.strip()})
+            return response_text.strip()
+
+
 async def stream_ollama(user_message: str) -> AsyncGenerator[str, None]:
     """Stream tokens from Ollama one by one. Appends to history on completion."""
     client = _get_ollama_client()
@@ -50,7 +93,7 @@ async def stream_ollama(user_message: str) -> AsyncGenerator[str, None]:
 
     full_response = ""
     async for chunk in await client.chat(
-        model="qwen3.5:2b",
+        model="qwen3.5:4b",
         messages=messages,
         think=False,
         stream=True,
@@ -67,7 +110,6 @@ async def stream_ollama(user_message: str) -> AsyncGenerator[str, None]:
 OPENROUTER_MODEL = "openai/gpt-oss-120b:free"
 
 _or_history: list = []
-_search_tool = DuckDuckGoSearchRun()
 _or_llm: ChatOpenAI | None = None
 
 
@@ -110,16 +152,15 @@ async def chat_openrouter(user_message: str) -> str:
 async def stream_chat(user_message: str, engine: str = "ollama") -> AsyncGenerator[str, None]:
     """
     Async generator that yields LLM tokens.
-    - Ollama: true token-by-token streaming
+    - Ollama: uses chat_ollama with tool calling support
     - OpenRouter: tool calls resolved first, then full response yielded at once
-      (tool calling with streaming is not supported here)
     """
     if engine == "openrouter":
         result = await chat_openrouter(user_message)
         yield result
     else:
-        async for token in stream_ollama(user_message):
-            yield token
+        result = await chat_ollama(user_message)
+        yield result
 
 
 # ── Non-streaming fallback (kept for compatibility) ───────────────────────────
