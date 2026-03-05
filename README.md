@@ -1,4 +1,4 @@
-# Voice Bot
+# Vox
 
 A fully local voice-to-voice chatbot running on your machine. Talk to it, it talks back.
 

@@ -15,3 +15,6 @@ wheels/
 # Downloaded models / vendor deps
 models/
 vendor/
+
+# Environment variables (API keys)
+.env

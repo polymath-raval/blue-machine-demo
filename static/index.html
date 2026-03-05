@@ -3,18 +3,35 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Voice Bot</title>
+  <title>Vox</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #0d1117;
-      color: #e6edf3;
+      background: #0b0818;
+      color: rgba(255,255,255,0.88);
       height: 100dvh;
       display: flex;
       flex-direction: column;
+      overflow: hidden;
     }
+
+    /* ── Animated gradient background ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 80% 60% at 20% 10%, rgba(120,60,220,.35) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 50% at 80% 80%, rgba(30,80,200,.3) 0%, transparent 55%),
+        radial-gradient(ellipse 50% 40% at 50% 50%, rgba(80,20,160,.2) 0%, transparent 60%),
+        linear-gradient(160deg, #0b0818 0%, #110d24 50%, #0a1228 100%);
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    header, #chat, #status-bar, #controls { position: relative; z-index: 1; }
 
     /* ── Header ── */
     header {
@@ -22,22 +39,38 @@
       align-items: center;
       justify-content: space-between;
       padding: 14px 20px;
-      border-bottom: 1px solid #21262d;
+      background: rgba(255,255,255,0.04);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
       flex-shrink: 0;
     }
-    header h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: .02em; }
-    header span { font-size: .75rem; color: #8b949e; }
-    #clear-btn {
-      background: none;
-      border: 1px solid #30363d;
-      color: #8b949e;
-      padding: 5px 12px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: .8rem;
-      transition: border-color .2s, color .2s;
+    header h1 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: .04em;
+      background: linear-gradient(90deg, #c084fc, #818cf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
     }
-    #clear-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+    header span { font-size: .72rem; color: rgba(255,255,255,0.35); }
+    #clear-btn {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      color: rgba(255,255,255,0.45);
+      padding: 5px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: .78rem;
+      transition: all .2s;
+      backdrop-filter: blur(8px);
+    }
+    #clear-btn:hover {
+      background: rgba(192,132,252,0.15);
+      border-color: rgba(192,132,252,0.5);
+      color: #c084fc;
+    }
 
     /* ── Chat area ── */
     #chat {
@@ -52,140 +85,172 @@
 
     .msg {
       max-width: 72%;
-      padding: 10px 14px;
-      border-radius: 14px;
-      line-height: 1.5;
+      padding: 11px 15px;
+      border-radius: 18px;
+      line-height: 1.55;
       font-size: .92rem;
-      animation: fadeIn .2s ease;
+      animation: fadeIn .25s ease;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
     }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
     .msg.user {
       align-self: flex-end;
-      background: #1f6feb;
-      color: #fff;
-      border-bottom-right-radius: 4px;
+      background: rgba(129,96,255,0.45);
+      border: 1px solid rgba(168,139,255,0.35);
+      border-bottom-right-radius: 5px;
+      box-shadow: 0 4px 20px rgba(129,96,255,0.2);
     }
     .msg.bot {
       align-self: flex-start;
-      background: #161b22;
-      border: 1px solid #21262d;
-      border-bottom-left-radius: 4px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-bottom-left-radius: 5px;
     }
     .msg .label {
-      font-size: .7rem;
-      font-weight: 600;
-      letter-spacing: .05em;
+      font-size: .68rem;
+      font-weight: 700;
+      letter-spacing: .08em;
       text-transform: uppercase;
-      opacity: .6;
+      opacity: .45;
       margin-bottom: 4px;
     }
 
     /* ── Status bar ── */
     #status-bar {
       text-align: center;
-      font-size: .8rem;
-      color: #8b949e;
+      font-size: .78rem;
+      color: rgba(255,255,255,0.3);
       padding: 6px;
       min-height: 28px;
       flex-shrink: 0;
+      letter-spacing: .02em;
     }
-    #status-bar.recording { color: #f85149; }
-    #status-bar.processing { color: #58a6ff; }
+    #status-bar.recording { color: #f87171; }
+    #status-bar.processing { color: #a78bfa; }
 
     /* ── Controls ── */
     #controls {
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 10px;
-      padding: 16px 20px 24px;
+      gap: 12px;
+      padding: 16px 20px 28px;
       flex-shrink: 0;
-      border-top: 1px solid #21262d;
+      background: rgba(255,255,255,0.03);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border-top: 1px solid rgba(255,255,255,0.07);
     }
 
     #mic-btn {
-      width: 68px;
-      height: 68px;
+      width: 72px;
+      height: 72px;
       border-radius: 50%;
-      border: none;
-      background: #21262d;
-      color: #e6edf3;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.08);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      color: rgba(255,255,255,0.85);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background .15s, box-shadow .15s, transform .1s;
+      transition: all .2s;
       user-select: none;
       -webkit-user-select: none;
       touch-action: none;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1);
     }
-    #mic-btn:hover { background: #30363d; }
+    #mic-btn:hover {
+      background: rgba(192,132,252,0.18);
+      border-color: rgba(192,132,252,0.4);
+      box-shadow: 0 4px 28px rgba(192,132,252,0.2), inset 0 1px 0 rgba(255,255,255,0.1);
+    }
     #mic-btn.recording {
-      background: #da3633;
-      box-shadow: 0 0 0 8px rgba(218,54,51,.2);
-      animation: pulse 1s infinite;
+      background: rgba(239,68,68,0.3);
+      border-color: rgba(239,68,68,0.6);
+      box-shadow: 0 0 0 8px rgba(239,68,68,0.12), 0 0 40px rgba(239,68,68,0.25);
+      animation: pulse 1.2s infinite;
     }
     #mic-btn.processing {
-      background: #1f6feb;
+      background: rgba(129,96,255,0.25);
+      border-color: rgba(129,96,255,0.5);
+      box-shadow: 0 0 28px rgba(129,96,255,0.3);
       cursor: not-allowed;
     }
     @keyframes pulse {
-      0%, 100% { box-shadow: 0 0 0 8px rgba(218,54,51,.2); }
-      50%       { box-shadow: 0 0 0 14px rgba(218,54,51,.08); }
+      0%, 100% { box-shadow: 0 0 0 8px rgba(239,68,68,0.12), 0 0 40px rgba(239,68,68,0.2); }
+      50%       { box-shadow: 0 0 0 16px rgba(239,68,68,0.06), 0 0 60px rgba(239,68,68,0.15); }
     }
 
     #mic-btn svg { pointer-events: none; }
 
     #hint {
-      font-size: .74rem;
-      color: #484f58;
+      font-size: .72rem;
+      color: rgba(255,255,255,0.2);
+      letter-spacing: .02em;
     }
 
-    /* ── TTS selector ── */
-    #tts-row {
+    /* ── LLM / TTS selectors ── */
+    #llm-row, #tts-row {
       display: flex;
       align-items: center;
       gap: 8px;
       font-size: .8rem;
     }
+    .row-label {
+      font-size: .68rem;
+      color: rgba(255,255,255,0.25);
+      min-width: 32px;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
     .engine-btn {
-      padding: 4px 12px;
+      padding: 4px 13px;
       border-radius: 20px;
-      border: 1px solid #30363d;
-      background: none;
-      color: #8b949e;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.04);
+      color: rgba(255,255,255,0.4);
       cursor: pointer;
-      font-size: .78rem;
-      transition: all .15s;
+      font-size: .76rem;
+      transition: all .18s;
+    }
+    .engine-btn:hover {
+      background: rgba(192,132,252,0.1);
+      border-color: rgba(192,132,252,0.3);
+      color: rgba(192,132,252,0.8);
     }
     .engine-btn.active {
-      background: #21262d;
-      border-color: #58a6ff;
-      color: #58a6ff;
+      background: rgba(192,132,252,0.18);
+      border-color: rgba(192,132,252,0.55);
+      color: #c084fc;
+      box-shadow: 0 0 12px rgba(192,132,252,0.2);
     }
     #voice-select {
-      background: #161b22;
-      border: 1px solid #30363d;
-      color: #e6edf3;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      color: rgba(255,255,255,0.7);
       padding: 4px 8px;
-      border-radius: 6px;
-      font-size: .78rem;
+      border-radius: 8px;
+      font-size: .76rem;
       cursor: pointer;
       max-width: 220px;
+      backdrop-filter: blur(8px);
     }
 
     /* Scrollbar */
-    #chat::-webkit-scrollbar { width: 5px; }
+    #chat::-webkit-scrollbar { width: 4px; }
     #chat::-webkit-scrollbar-track { background: transparent; }
-    #chat::-webkit-scrollbar-thumb { background: #21262d; border-radius: 3px; }
+    #chat::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
   </style>
 </head>
 <body>
 
 <header>
-  <h1>🎙 Voice Bot</h1>
-  <span>qwen3.5:2b · whisper-small</span>
+  <h1>🎙 Vox</h1>
+  <span id="model-badge">qwen3.5:2b · whisper-small</span>
   <button id="clear-btn">Clear</button>
 </header>
 
@@ -206,8 +271,16 @@
     </svg>
   </button>
 
+  <!-- LLM engine picker -->
+  <div id="llm-row">
+    <span class="row-label">LLM</span>
+    <button class="engine-btn active" data-llm="ollama">Ollama</button>
+    <button class="engine-btn" data-llm="openrouter">OpenRouter</button>
+  </div>
+
   <!-- TTS engine + voice picker -->
   <div id="tts-row">
+    <span class="row-label">TTS</span>
     <button class="engine-btn active" data-engine="kokoro">Kokoro</button>
     <button class="engine-btn" data-engine="edge">Edge TTS</button>
     <select id="voice-select"></select>
@@ -222,7 +295,11 @@
   const statusBar = document.getElementById('status-bar');
   const clearBtn = document.getElementById('clear-btn');
   const voiceSelect = document.getElementById('voice-select');
-  const engineBtns = document.querySelectorAll('.engine-btn');
+  const engineBtns = document.querySelectorAll('[data-engine]');
+  const llmBtns = document.querySelectorAll('[data-llm]');
+  const modelBadge = document.getElementById('model-badge');
+
+  let currentLlmEngine = 'ollama';
 
   let mediaRecorder = null;
   let audioChunks = [];
@@ -277,6 +354,20 @@
       btn.classList.add('active');
       currentEngine = btn.dataset.engine;
       populateVoices(currentEngine);
+    });
+  });
+
+  const LLM_BADGES = {
+    ollama: 'qwen3.5:2b · whisper-small',
+    openrouter: 'gpt-oss-120b · whisper-small',
+  };
+
+  llmBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      llmBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentLlmEngine = btn.dataset.llm;
+      modelBadge.textContent = LLM_BADGES[currentLlmEngine];
     });
   });
 
@@ -360,27 +451,46 @@
 
     isProcessing = true;
     micBtn.classList.add('processing');
-    setStatus('Processing…', 'processing');
+    setStatus('Transcribing…', 'processing');
 
-    const thinkingEl = addThinking();
+    let thinkingEl = null;
 
     try {
-      const form = new FormData();
-      form.append('audio', blob, `audio.${ext}`);
-      form.append('tts_engine', currentEngine);
-      form.append('voice', voiceSelect.value);
+      // ── Step 1: Transcribe ──
+      const sttForm = new FormData();
+      sttForm.append('audio', blob, `audio.${ext}`);
 
-      const res = await fetch('/chat', { method: 'POST', body: form });
+      const sttRes = await fetch('/transcribe', { method: 'POST', body: sttForm });
+      const sttData = await sttRes.json();
+
+      if (sttData.error) {
+        setStatus(sttData.error);
+        return;
+      }
+
+      // Show user message immediately after transcription
+      addMessage('user', sttData.transcription);
+      thinkingEl = addThinking();
+      setStatus('Thinking…', 'processing');
+
+      // ── Step 2: LLM + TTS ──
+      const respondForm = new FormData();
+      respondForm.append('text', sttData.transcription);
+      respondForm.append('tts_engine', currentEngine);
+      respondForm.append('voice', voiceSelect.value);
+      respondForm.append('llm_engine', currentLlmEngine);
+
+      const res = await fetch('/respond', { method: 'POST', body: respondForm });
       const data = await res.json();
 
       thinkingEl.remove();
+      thinkingEl = null;
 
       if (data.error) {
         setStatus(data.error);
         return;
       }
 
-      addMessage('user', data.transcription);
       addMessage('bot', data.response);
 
       // Play TTS audio via AudioContext (works on Safari — bypasses autoplay block)
@@ -390,7 +500,7 @@
 
       setStatus('Ready');
     } catch (err) {
-      thinkingEl.remove();
+      if (thinkingEl) thinkingEl.remove();
       setStatus('Error: ' + err.message);
       console.error(err);
     } finally {

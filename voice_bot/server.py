@@ -18,7 +18,7 @@ from .tts import (
     synthesize_kokoro,
 )
 
-app = FastAPI(title="Voice Bot")
+app = FastAPI(title="Vox")
 
 _static = Path(__file__).parent.parent / "static"
 app.mount("/static", StaticFiles(directory=str(_static)), name="static")
@@ -34,12 +34,9 @@ async def get_voices() -> JSONResponse:
     return JSONResponse({"kokoro": KOKORO_VOICES, "edge": EDGE_VOICES})
 
 
-@app.post("/chat")
-async def voice_chat(
-    audio: UploadFile = File(...),
-    tts_engine: str = Form("kokoro"),
-    voice: str = Form(""),
-) -> JSONResponse:
+@app.post("/transcribe")
+async def transcribe_audio(audio: UploadFile = File(...)) -> JSONResponse:
+    """Step 1: Speech-to-text only. Returns transcription immediately."""
     audio_bytes = await audio.read()
     filename = audio.filename or "audio.webm"
     suffix = "." + filename.rsplit(".", 1)[-1]
@@ -49,32 +46,40 @@ async def voice_chat(
         tmp_path = tmp.name
 
     try:
-        # 1. Speech-to-text
         transcription = await asyncio.to_thread(transcribe, tmp_path)
         if not transcription:
             return JSONResponse({"error": "No speech detected"}, status_code=400)
-
-        # 2. LLM
-        response_text = await chat(transcription)
-
-        # 3. TTS — route to selected engine
-        if tts_engine == "edge":
-            selected_voice = voice or "en-IN-NeerjaNeural"
-            audio_data, mime = await synthesize_edge(response_text, selected_voice)
-        else:
-            selected_voice = voice or "af_heart"
-            audio_data, mime = await asyncio.to_thread(
-                synthesize_kokoro, response_text, selected_voice
-            )
-
-        return JSONResponse({
-            "transcription": transcription,
-            "response": response_text,
-            "audio": base64.b64encode(audio_data).decode(),
-            "mime": mime,
-        })
+        return JSONResponse({"transcription": transcription})
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+@app.post("/respond")
+async def respond(
+    text: str = Form(...),
+    tts_engine: str = Form("kokoro"),
+    voice: str = Form(""),
+    llm_engine: str = Form("ollama"),
+) -> JSONResponse:
+    """Step 2: LLM + TTS. Takes transcription text, returns response + audio."""
+    # 1. LLM
+    response_text = await chat(text, engine=llm_engine)
+
+    # 2. TTS
+    if tts_engine == "edge":
+        selected_voice = voice or "en-IN-NeerjaNeural"
+        audio_data, mime = await synthesize_edge(response_text, selected_voice)
+    else:
+        selected_voice = voice or "af_heart"
+        audio_data, mime = await asyncio.to_thread(
+            synthesize_kokoro, response_text, selected_voice
+        )
+
+    return JSONResponse({
+        "response": response_text,
+        "audio": base64.b64encode(audio_data).decode(),
+        "mime": mime,
+    })
 
 
 @app.post("/clear")
