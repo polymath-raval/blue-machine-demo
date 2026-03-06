@@ -206,35 +206,6 @@
 
     #mic-btn svg { pointer-events: none; }
 
-    /* ── Stop button ── */
-    #stop-btn {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 7px 20px;
-      border-radius: 20px;
-      border: 1px solid rgba(239,68,68,0.4);
-      background: rgba(239,68,68,0.12);
-      color: #f87171;
-      cursor: pointer;
-      font-size: .8rem;
-      font-weight: 600;
-      letter-spacing: .03em;
-      opacity: 0;
-      pointer-events: none;
-      transform: translateY(4px);
-      transition: opacity .2s, transform .2s, background .15s, border-color .15s;
-    }
-    #stop-btn.visible {
-      opacity: 1;
-      pointer-events: auto;
-      transform: none;
-    }
-    #stop-btn:hover {
-      background: rgba(239,68,68,0.25);
-      border-color: rgba(239,68,68,0.7);
-    }
-
     #hint {
       font-size: .72rem;
       color: rgba(255,255,255,0.2);
@@ -298,7 +269,7 @@
 
 <header>
   <h1>🎙 Vox</h1>
-  <span id="model-badge">qwen3.5:2b · whisper-small</span>
+  <span id="model-badge">llama3.1:8b · whisper-small</span>
   <button id="clear-btn">Clear</button>
 </header>
 
@@ -317,14 +288,6 @@
     <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
       <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/>
     </svg>
-  </button>
-
-  <!-- Stop button (shown during bot response) -->
-  <button id="stop-btn" title="Stop response">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-      <rect x="4" y="4" width="16" height="16" rx="2"/>
-    </svg>
-    Stop
   </button>
 
   <!-- LLM engine picker -->
@@ -349,7 +312,6 @@
   // ── DOM refs ──────────────────────────────────────────────────────────────────
   const chat        = document.getElementById('chat');
   const micBtn      = document.getElementById('mic-btn');
-  const stopBtn     = document.getElementById('stop-btn');
   const statusBar   = document.getElementById('status-bar');
   const clearBtn    = document.getElementById('clear-btn');
   const voiceSelect = document.getElementById('voice-select');
@@ -418,17 +380,6 @@
     });
   }
 
-  // Stop any in-flight response: abort fetch + kill audio + clear queue
-  function stopAll() {
-    if (currentAbortController) { currentAbortController.abort(); currentAbortController = null; }
-    audioQueue = [];
-    isPlayingAudio = false;
-    if (currentAudioSource) {
-      try { currentAudioSource.stop(); } catch (_) {}
-      currentAudioSource = null;
-    }
-  }
-
   // ── TTS engine / voice selection ──────────────────────────────────────────────
   async function loadVoices() {
     const res = await fetch('/voices');
@@ -457,7 +408,7 @@
   });
 
   const LLM_BADGES = {
-    ollama:      'qwen3.5:2b · whisper-small',
+    ollama:      'llama3.1:8b · whisper-small',
     openrouter:  'gpt-oss-120b · whisper-small',
   };
 
@@ -598,7 +549,6 @@
     isPlayingAudio = false;
     micBtn.classList.remove('speaking');
     micBtn.classList.add('processing');
-    stopBtn.classList.add('visible');
 
     currentAbortController = new AbortController();
     const { signal } = currentAbortController;
@@ -679,11 +629,9 @@
         setStatus('Error: ' + err.message);
         console.error(err);
       }
-      // AbortError = user hit Stop — silent cleanup
     } finally {
       currentAbortController = null;
       isProcessingVAD = false;
-      stopBtn.classList.remove('visible');
       micBtn.classList.remove('processing');
       if (inCall) {
         micBtn.classList.add('in-call');
@@ -694,11 +642,6 @@
 
   // ── Event listeners ───────────────────────────────────────────────────────────
   micBtn.addEventListener('click', toggleCall);
-
-  stopBtn.addEventListener('click', () => {
-    stopAll();
-    // handleVADAudio finally block will clean up state and resume listening
-  });
 
   document.addEventListener('keydown', e => {
     if (e.code === 'Space' && e.target === document.body && !e.repeat) {

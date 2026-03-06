@@ -29,18 +29,31 @@ _ollama_client: AsyncClient | None = None
 _ollama_history: list[dict] = []
 _search_tool = DuckDuckGoSearchRun()
 
-OLLAMA_SYSTEM_PROMPT = (
-    SYSTEM_PROMPT + "\n\n"
-    "When you need current information or want to search for something, use this format:\n"
-    "<search>your search query here</search>\n"
-    "I will provide search results, then you can incorporate them into your response."
-)
+# Tool definition for Ollama's native tool calling
+SEARCH_TOOL_DEF = {
+    "type": "function",
+    "function": {
+        "name": "web_search",
+        "description": "Search the web for current information using DuckDuckGo",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+}
 
 
 def _get_ollama_client() -> AsyncClient:
     global _ollama_client
     if _ollama_client is None:
-        _ollama_client = AsyncClient()
+        ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        _ollama_client = AsyncClient(host=ollama_host)
     return _ollama_client
 
 
@@ -49,42 +62,45 @@ def _strip_thinking(text: str) -> str:
 
 
 async def chat_ollama(user_message: str) -> str:
-    """Chat with Ollama with tool calling support via search markers."""
+    """Chat with Ollama using native tool calling (llama3.1:8b with web_search)."""
     client = _get_ollama_client()
-    
+
     _ollama_history.append({"role": "user", "content": user_message})
     recent = _ollama_history[-(MAX_HISTORY_TURNS * 2):]
-    messages = [{"role": "system", "content": OLLAMA_SYSTEM_PROMPT}] + recent
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + recent
 
     while True:
-        response_text = ""
-        async for chunk in await client.chat(
-            model="qwen3.5:4b",
+        response = await client.chat(
+            model="llama3.1:8b",
             messages=messages,
-            think=False,
-            stream=True,
-        ):
-            token = chunk.message.content or ""
-            response_text += token
+            tools=[SEARCH_TOOL_DEF],
+            stream=False,  # Full response to detect tool calls
+        )
 
-        # Check for search tool marker
-        search_match = re.search(r'<search>(.*?)</search>', response_text, re.DOTALL)
-        
-        if search_match:
-            query = search_match.group(1).strip()
-            print(f"[Tool Call] Searching for: {query}")
-            result = _search_tool.run(query)
-            
-            # Add response and search result to conversation
-            messages.append({"role": "assistant", "content": response_text})
-            messages.append({"role": "user", "content": f"Search results:\n{result}\n\nNow provide your response based on these results."})
+        response_text = response.message.content or ""
+
+        # Check if tool was called
+        if response.message.tool_calls:
+            print(f"[Tool Call] {response.message.tool_calls}")
+            messages.append({"role": "assistant", "content": response_text, "tool_calls": response.message.tool_calls})
+
+            # Execute each tool call
+            for tc in response.message.tool_calls:
+                if tc.function.name == "web_search":
+                    query = tc.function.arguments.get("query", "")
+                    result = _search_tool.run(query)
+                    messages.append({
+                        "role": "tool",
+                        "content": result,
+                        "name": "web_search",
+                    })
         else:
             _ollama_history.append({"role": "assistant", "content": response_text.strip()})
             return response_text.strip()
 
 
 async def stream_ollama(user_message: str) -> AsyncGenerator[str, None]:
-    """Stream tokens from Ollama one by one. Appends to history on completion."""
+    """Stream tokens from Ollama one by one using llama3.1:8b. Appends to history on completion."""
     client = _get_ollama_client()
     _ollama_history.append({"role": "user", "content": user_message})
 
@@ -93,9 +109,8 @@ async def stream_ollama(user_message: str) -> AsyncGenerator[str, None]:
 
     full_response = ""
     async for chunk in await client.chat(
-        model="qwen3.5:4b",
+        model="llama3.1:8b",
         messages=messages,
-        think=False,
         stream=True,
     ):
         token = chunk.message.content or ""
