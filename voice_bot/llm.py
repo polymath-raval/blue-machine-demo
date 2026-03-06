@@ -29,24 +29,12 @@ _ollama_client: AsyncClient | None = None
 _ollama_history: list[dict] = []
 _search_tool = DuckDuckGoSearchRun()
 
-# Tool definition for Ollama's native tool calling
-SEARCH_TOOL_DEF = {
-    "type": "function",
-    "function": {
-        "name": "web_search",
-        "description": "Search the web for current information using DuckDuckGo",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query",
-                }
-            },
-            "required": ["query"],
-        },
-    },
-}
+OLLAMA_SYSTEM_PROMPT = (
+    SYSTEM_PROMPT + "\n\n"
+    "When you need current information, recent news, or real-time data, use this format:\n"
+    "<search>your search query</search>\n"
+    "I will search for information and provide the results. Then continue with your response based on those results."
+)
 
 
 def _get_ollama_client() -> AsyncClient:
@@ -62,38 +50,37 @@ def _strip_thinking(text: str) -> str:
 
 
 async def chat_ollama(user_message: str) -> str:
-    """Chat with Ollama using native tool calling (llama3.1:8b with web_search)."""
+    """Chat with Ollama using search markers for web access (llama3.1:8b)."""
     client = _get_ollama_client()
 
     _ollama_history.append({"role": "user", "content": user_message})
     recent = _ollama_history[-(MAX_HISTORY_TURNS * 2):]
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + recent
+    messages = [{"role": "system", "content": OLLAMA_SYSTEM_PROMPT}] + recent
 
     while True:
-        response = await client.chat(
+        response_text = ""
+        async for chunk in await client.chat(
             model="llama3.1:8b",
             messages=messages,
-            tools=[SEARCH_TOOL_DEF],
-            stream=False,  # Full response to detect tool calls
-        )
+            stream=True,
+        ):
+            token = chunk.message.content or ""
+            response_text += token
 
-        response_text = response.message.content or ""
+        # Check for search marker: <search>query</search>
+        search_match = re.search(r'<search>(.*?)</search>', response_text, re.DOTALL)
 
-        # Check if tool was called
-        if response.message.tool_calls:
-            print(f"[Tool Call] {response.message.tool_calls}")
-            messages.append({"role": "assistant", "content": response_text, "tool_calls": response.message.tool_calls})
+        if search_match:
+            query = search_match.group(1).strip()
+            print(f"[Tool Call] Searching for: {query}")
+            result = _search_tool.run(query)
 
-            # Execute each tool call
-            for tc in response.message.tool_calls:
-                if tc.function.name == "web_search":
-                    query = tc.function.arguments.get("query", "")
-                    result = _search_tool.run(query)
-                    messages.append({
-                        "role": "tool",
-                        "content": result,
-                        "name": "web_search",
-                    })
+            # Add assistant response with search marker and search result to conversation
+            messages.append({"role": "assistant", "content": response_text})
+            messages.append({
+                "role": "user",
+                "content": f"Search results for '{query}':\n{result}\n\nNow provide your response based on these search results."
+            })
         else:
             _ollama_history.append({"role": "assistant", "content": response_text.strip()})
             return response_text.strip()
