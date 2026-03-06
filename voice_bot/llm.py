@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from typing import AsyncGenerator
 
 from dotenv import load_dotenv
 from langchain_community.tools import DuckDuckGoSearchRun
@@ -26,12 +27,33 @@ SYSTEM_PROMPT = (
 
 _ollama_client: AsyncClient | None = None
 _ollama_history: list[dict] = []
+_search_tool = DuckDuckGoSearchRun()
+
+# Tool definition for Ollama's native tool calling
+SEARCH_TOOL_DEF = {
+    "type": "function",
+    "function": {
+        "name": "web_search",
+        "description": "Search the web for current information using DuckDuckGo",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+}
 
 
 def _get_ollama_client() -> AsyncClient:
     global _ollama_client
     if _ollama_client is None:
-        _ollama_client = AsyncClient()
+        ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        _ollama_client = AsyncClient(host=ollama_host)
     return _ollama_client
 
 
@@ -40,29 +62,69 @@ def _strip_thinking(text: str) -> str:
 
 
 async def chat_ollama(user_message: str) -> str:
+    """Chat with Ollama using native tool calling (llama3.1:8b with web_search)."""
+    client = _get_ollama_client()
+
+    _ollama_history.append({"role": "user", "content": user_message})
+    recent = _ollama_history[-(MAX_HISTORY_TURNS * 2):]
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + recent
+
+    while True:
+        response = await client.chat(
+            model="llama3.1:8b",
+            messages=messages,
+            tools=[SEARCH_TOOL_DEF],
+            stream=False,  # Full response to detect tool calls
+        )
+
+        response_text = response.message.content or ""
+
+        # Check if tool was called
+        if response.message.tool_calls:
+            print(f"[Tool Call] {response.message.tool_calls}")
+            messages.append({"role": "assistant", "content": response_text, "tool_calls": response.message.tool_calls})
+
+            # Execute each tool call
+            for tc in response.message.tool_calls:
+                if tc.function.name == "web_search":
+                    query = tc.function.arguments.get("query", "")
+                    result = _search_tool.run(query)
+                    messages.append({
+                        "role": "tool",
+                        "content": result,
+                        "name": "web_search",
+                    })
+        else:
+            _ollama_history.append({"role": "assistant", "content": response_text.strip()})
+            return response_text.strip()
+
+
+async def stream_ollama(user_message: str) -> AsyncGenerator[str, None]:
+    """Stream tokens from Ollama one by one using llama3.1:8b. Appends to history on completion."""
     client = _get_ollama_client()
     _ollama_history.append({"role": "user", "content": user_message})
 
     recent = _ollama_history[-(MAX_HISTORY_TURNS * 2):]
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + recent
 
-    response = await client.chat(
-        model="qwen3.5:2b",
+    full_response = ""
+    async for chunk in await client.chat(
+        model="llama3.1:8b",
         messages=messages,
-        think=False,
-    )
+        stream=True,
+    ):
+        token = chunk.message.content or ""
+        full_response += token
+        yield token
 
-    content = _strip_thinking(response.message.content)
-    _ollama_history.append({"role": "assistant", "content": content})
-    return content
+    _ollama_history.append({"role": "assistant", "content": full_response.strip()})
 
 
 # ── OpenRouter + DuckDuckGo tool ──────────────────────────────────────────────
 
 OPENROUTER_MODEL = "openai/gpt-oss-120b:free"
 
-_or_history: list = []  # list of LangChain message objects
-_search_tool = DuckDuckGoSearchRun()
+_or_history: list = []
 _or_llm: ChatOpenAI | None = None
 
 
@@ -84,7 +146,6 @@ async def chat_openrouter(user_message: str) -> str:
     recent = _or_history[-(MAX_HISTORY_TURNS * 2):]
     messages = [SystemMessage(content=SYSTEM_PROMPT)] + recent
 
-    # Agentic tool-calling loop
     while True:
         response: AIMessage = await llm.ainvoke(messages)
         messages.append(response)
@@ -92,7 +153,6 @@ async def chat_openrouter(user_message: str) -> str:
         if not response.tool_calls:
             break
 
-        # Execute each tool call and feed results back
         for tc in response.tool_calls:
             result = _search_tool.run(tc["args"].get("query", ""))
             messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
@@ -102,12 +162,29 @@ async def chat_openrouter(user_message: str) -> str:
     return content
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
+# ── Public streaming API ──────────────────────────────────────────────────────
+
+async def stream_chat(user_message: str, engine: str = "ollama") -> AsyncGenerator[str, None]:
+    """
+    Async generator that yields LLM tokens.
+    - Ollama: uses chat_ollama with tool calling support
+    - OpenRouter: tool calls resolved first, then full response yielded at once
+    """
+    if engine == "openrouter":
+        result = await chat_openrouter(user_message)
+        yield result
+    else:
+        result = await chat_ollama(user_message)
+        yield result
+
+
+# ── Non-streaming fallback (kept for compatibility) ───────────────────────────
 
 async def chat(user_message: str, engine: str = "ollama") -> str:
-    if engine == "openrouter":
-        return await chat_openrouter(user_message)
-    return await chat_ollama(user_message)
+    tokens = []
+    async for token in stream_chat(user_message, engine=engine):
+        tokens.append(token)
+    return "".join(tokens)
 
 
 def clear_history() -> None:
